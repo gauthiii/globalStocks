@@ -48,6 +48,7 @@ export default function MiniChart({ stock, timeRange, onClick, type }) {
         <div>
           <div className="card-ticker">{displayName}</div>
           <div className="card-name">{stock.name}</div>
+          {stock.category && <span className="cat-badge">{stock.category}</span>}
         </div>
         <div>
           {loading ? (

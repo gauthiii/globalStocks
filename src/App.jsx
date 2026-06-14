@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import MiniChart from './components/MiniChart';
 import ChartModal from './components/ChartModal';
-import { TABS, TIME_RANGES } from './config/stocks';
+import ConsolidatedView from './components/ConsolidatedView';
+import { TABS, TIME_RANGES, categoriesOf } from './config/stocks';
 
 function SunIcon() {
   return (
@@ -30,12 +31,55 @@ function MoonIcon() {
 
 function Dashboard() {
   const { theme, toggle } = useTheme();
-  const [activeTab, setActiveTab] = useState('us-stocks');
-  const [selectedRange, setSelectedRange] = useState('1M');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('gs-tab') || 'us-stocks');
+  const [selectedRange, setSelectedRange] = useState(() => localStorage.getItem('gs-range') || '1M');
   const [modal, setModal] = useState(null);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('All');
+  const [sortBy, setSortBy] = useState('default');
 
-  const tab = TABS.find((t) => t.id === activeTab);
+  useEffect(() => { localStorage.setItem('gs-tab', activeTab); }, [activeTab]);
+  useEffect(() => { localStorage.setItem('gs-range', selectedRange); }, [selectedRange]);
+
+  // Switch tab and reset its filters.
+  const changeTab = (id) => {
+    setActiveTab(id);
+    setQuery('');
+    setCategory('All');
+    setSortBy('default');
+  };
+
+  const tab = TABS.find((t) => t.id === activeTab) || TABS[0];
   const timeRange = TIME_RANGES.find((t) => t.label === selectedRange) || TIME_RANGES[4];
+  const isConsolidated = !!tab.consolidated;
+
+  const categories = useMemo(
+    () => (isConsolidated ? [] : ['All', ...categoriesOf(tab.data)]),
+    [tab, isConsolidated]
+  );
+
+  const visible = useMemo(() => {
+    if (isConsolidated) return [];
+    let list = tab.data.filter((s) => {
+      const hay = `${s.display || ''} ${s.symbol || ''} ${s.name || ''}`.toLowerCase();
+      const matchQ = hay.includes(query.trim().toLowerCase());
+      const matchC = category === 'All' || s.category === category;
+      return matchQ && matchC;
+    });
+    if (sortBy === 'name') {
+      list = [...list].sort((a, b) =>
+        (a.display || a.symbol || a.name).localeCompare(b.display || b.symbol || b.name)
+      );
+    }
+    return list;
+  }, [tab, isConsolidated, query, category, sortBy]);
+
+  // Group the visible items by category (improvement: categorized sections).
+  const groups = useMemo(() => {
+    if (isConsolidated) return [];
+    const order = categoriesOf(visible);
+    return order.map((cat) => ({ cat, items: visible.filter((s) => s.category === cat) }));
+  }, [visible, isConsolidated]);
 
   return (
     <div className="app">
@@ -57,7 +101,7 @@ function Dashboard() {
           <button
             key={t.id}
             className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(t.id)}
+            onClick={() => changeTab(t.id)}
           >
             {t.label}
           </button>
@@ -84,18 +128,68 @@ function Dashboard() {
           })}
         </div>
 
-        {/* Cards grid */}
-        <div className="stock-grid">
-          {tab.data.map((stock) => (
-            <MiniChart
-              key={stock.symbol || stock.schemeCode}
-              stock={stock}
-              timeRange={timeRange}
-              type={tab.type}
-              onClick={() => setModal({ stock, type: tab.type })}
-            />
-          ))}
-        </div>
+        {isConsolidated ? (
+          <ConsolidatedView
+            timeRange={timeRange}
+            onSelect={(m) => setModal(m)}
+          />
+        ) : (
+          <>
+            {/* Toolbar: search + category chips + sort */}
+            <div className="toolbar">
+              <input
+                className="search-input"
+                type="text"
+                placeholder="Search ticker or name…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <div className="chip-row">
+                {categories.map((c) => (
+                  <button
+                    key={c}
+                    className={`chip ${category === c ? 'active' : ''}`}
+                    onClick={() => setCategory(c)}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+              <select
+                className="sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+              >
+                <option value="default">Sort: Default</option>
+                <option value="name">Sort: Name A–Z</option>
+              </select>
+            </div>
+
+            {visible.length === 0 ? (
+              <div className="empty-state">No instruments match your filters.</div>
+            ) : (
+              groups.map((g) => (
+                <section key={g.cat} className="cat-section">
+                  <div className="cat-section-head">
+                    <span>{g.cat}</span>
+                    <span className="cat-section-count">{g.items.length}</span>
+                  </div>
+                  <div className="stock-grid">
+                    {g.items.map((stock) => (
+                      <MiniChart
+                        key={stock.symbol || stock.schemeCode}
+                        stock={stock}
+                        timeRange={timeRange}
+                        type={tab.type}
+                        onClick={() => setModal({ stock, type: tab.type })}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))
+            )}
+          </>
+        )}
       </main>
 
       {/* Modal */}

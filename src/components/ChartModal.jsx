@@ -100,32 +100,36 @@ function HypotheticalRow({ label, thenPrice, nowPrice, amount, currency }) {
   );
 }
 
-function HypotheticalSection({ data1M, currency, currentPrice }) {
+const HYP_PERIODS = [
+  { label: 'Yesterday', days: 1 },
+  { label: 'Last Week', days: 7 },
+  { label: 'Last Month', days: 30 },
+  { label: '3 Months Back', days: 90 },
+  { label: '6 Months Back', days: 180 },
+];
+
+function HypotheticalSection({ data6M, currency, currentPrice }) {
   const defaultAmount = currency === 'INR' ? 10000 : 1000;
   const [amount, setAmount] = useState(defaultAmount);
 
-  const { weekPrice, monthPrice } = useMemo(() => {
-    if (!data1M?.points?.length) return {};
+  const prices = useMemo(() => {
+    if (!data6M?.points?.length) return {};
     const now = Date.now();
-    const weekAgo = now - 7 * 86400000;
-    const monthAgo = now - 30 * 86400000;
 
     const closest = (target) => {
-      const pts = data1M.points;
       let best = null;
       let bestDiff = Infinity;
-      for (const p of pts) {
+      for (const p of data6M.points) {
         const diff = Math.abs(p.time - target);
         if (diff < bestDiff) { bestDiff = diff; best = p; }
       }
       return best?.price;
     };
 
-    return {
-      weekPrice: closest(weekAgo),
-      monthPrice: closest(monthAgo),
-    };
-  }, [data1M]);
+    return Object.fromEntries(
+      HYP_PERIODS.map((p) => [p.label, closest(now - p.days * 86400000)])
+    );
+  }, [data6M]);
 
   const sym = currency === 'INR' ? '₹' : '$';
 
@@ -155,20 +159,16 @@ function HypotheticalSection({ data1M, currency, currentPrice }) {
           </tr>
         </thead>
         <tbody>
-          <HypotheticalRow
-            label="Last Week"
-            thenPrice={weekPrice}
-            nowPrice={currentPrice}
-            amount={amount}
-            currency={currency}
-          />
-          <HypotheticalRow
-            label="Last Month"
-            thenPrice={monthPrice}
-            nowPrice={currentPrice}
-            amount={amount}
-            currency={currency}
-          />
+          {HYP_PERIODS.map((p) => (
+            <HypotheticalRow
+              key={p.label}
+              label={p.label}
+              thenPrice={prices[p.label]}
+              nowPrice={currentPrice}
+              amount={amount}
+              currency={currency}
+            />
+          ))}
         </tbody>
       </table>
     </div>
@@ -183,9 +183,9 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
     stock.symbol, timeRange.range, timeRange.interval, type, stock.schemeCode
   );
 
-  // Separate 1M fetch for hypothetical section (server cache makes this cheap)
-  const { data: data1M } = useStockData(
-    stock.symbol, '1mo', '1d', type, stock.schemeCode
+  // Separate 6M fetch for hypothetical section (server cache makes this cheap)
+  const { data: data6M } = useStockData(
+    stock.symbol, '6mo', '1d', type, stock.schemeCode
   );
 
   useEffect(() => {
@@ -366,7 +366,7 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
         {/* Hypothetical investment */}
         {showStats && (
           <HypotheticalSection
-            data1M={data1M}
+            data6M={data6M}
             currency={data.currency}
             currentPrice={data.currentPrice}
           />

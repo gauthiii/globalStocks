@@ -725,3 +725,217 @@ button {
 
 .hyp-gain.up   { color: var(--up); }
 .hyp-gain.down { color: var(--down); }
+
+/* ─── Category badge on cards ─────────────────────────────── */
+
+.cat-badge {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 2px 7px;
+}
+
+/* ─── Toolbar (search / chips / sort) ─────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.search-input {
+  flex: 0 1 240px;
+  padding: 9px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.search-input:focus { border-color: var(--border-strong); }
+.search-input::placeholder { color: var(--text-muted); }
+
+.chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+.chip {
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.chip:hover { color: var(--text-secondary); border-color: var(--border-strong); }
+
+.chip.active {
+  background: var(--text-primary);
+  color: var(--accent-text);
+  border-color: var(--text-primary);
+}
+
+.sort-select {
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+  outline: none;
+}
+
+.empty-state {
+  padding: 48px 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* ─── Category sections ───────────────────────────────────── */
+
+.cat-section { margin-bottom: 28px; }
+
+.cat-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cat-section-count,
+.cons-cat-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* ─── Consolidated view ───────────────────────────────────── */
+
+.cons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 760px) {
+  .cons-grid { grid-template-columns: 1fr; }
+}
+
+.cons-col-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--text-primary);
+}
+
+.cons-cat { margin-bottom: 18px; }
+
+.cons-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.cons-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-surface);
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cons-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.cons-row-main { min-width: 0; }
+
+.cons-ticker {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.cons-name {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cons-row-figs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+}
+
+.cons-price {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cons-pct {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cons-pct.up { color: var(--up); }
+.cons-pct.down { color: var(--down); }
+.cons-muted { color: var(--text-muted); font-size: 13px; }
+.cons-down { color: var(--down); font-size: 12px; }
