@@ -1,0 +1,196 @@
+"""
+GlobalStocks AI analysis backend.
+
+A small FastAPI server that takes a ticker and asks an LLM agent (Claude or
+ChatGPT) for a short research note: recent performance, news with sources and a
+source-reputation score, and the likely impact of buying. Both providers use a
+live web-search tool so the news is current.
+
+Run:
+    cd backend
+    python -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
+    uvicorn main:app --reload --port 8000
+
+Keys are read from the project-root .env (ANTHROPIC_API_KEY / OPENAI_API_KEY).
+"""
+
+import json
+import os
+import re
+from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# Load .env from the project root (one level up from backend/).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+MAX_TOKENS = 5000
+
+app = FastAPI(title="GlobalStocks AI Analysis")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class AnalyzeRequest(BaseModel):
+    ticker: str
+    name: str | None = None
+    provider: str = "claude"  # "claude" | "openai"
+
+
+# ── Prompt ─────────────────────────────────────────────────────────────────
+
+def build_prompt(ticker: str, name: str | None) -> str:
+    label = f"{ticker}" + (f" ({name})" if name else "")
+    return f"""You are a financial research assistant. Research the security {label} \
+using web search for the latest information, then produce a concise analysis.
+
+Return ONLY a JSON object (no markdown, no prose outside the JSON) with EXACTLY this shape:
+
+{{
+  "summary": "2-3 sentence overview of how the stock has been performing.",
+  "performance": {{
+    "week":    {{ "trend": "up|down|flat", "change": "approx % or qualitative", "reason": "why" }},
+    "month":   {{ "trend": "up|down|flat", "change": "...", "reason": "..." }},
+    "quarter": {{ "trend": "up|down|flat", "change": "...", "reason": "..." }},
+    "year":    {{ "trend": "up|down|flat", "change": "...", "reason": "..." }}
+  }},
+  "news": [
+    {{
+      "headline": "recent headline that could impact the stock",
+      "source": "publication name",
+      "url": "valid source URL",
+      "reputationScore": 0-100,
+      "reputationNote": "one line on why the source is/isn't reputable",
+      "impact": "how this news could affect the stock"
+    }}
+  ],
+  "impactIfBought": {{
+    "shortTerm": "likely impact factor / outlook if bought now, short run",
+    "longTerm": "likely impact factor / outlook in the longer run"
+  }}
+}}
+
+Provide 1-3 news items, each with a REAL, verifiable source URL found via web search and an honest \
+reputationScore (0=unreliable, 100=highly reputable). Keep the whole response under {MAX_TOKENS} tokens. \
+Output JSON only."""
+
+
+def extract_json(text: str) -> dict:
+    """Pull the JSON object out of an LLM response, tolerating code fences."""
+    text = text.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    else:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1:
+            text = text[start : end + 1]
+    return json.loads(text)
+
+
+# ── Providers ──────────────────────────────────────────────────────────────
+
+def analyze_with_claude(ticker: str, name: str | None) -> dict:
+    import anthropic
+
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise HTTPException(500, "ANTHROPIC_API_KEY is not set in .env")
+
+    client = anthropic.Anthropic()
+    messages = [{"role": "user", "content": build_prompt(ticker, name)}]
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+
+    # Server-side tools may pause; resume until the turn ends.
+    for _ in range(6):
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=MAX_TOKENS,
+            messages=messages,
+            tools=tools,
+        )
+        if resp.stop_reason == "pause_turn":
+            messages.append({"role": "assistant", "content": resp.content})
+            continue
+        break
+
+    text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    return extract_json(text)
+
+
+def analyze_with_openai(ticker: str, name: str | None) -> dict:
+    from openai import OpenAI
+
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(500, "OPENAI_API_KEY is not set in .env")
+
+    client = OpenAI()
+    resp = client.responses.create(
+        model=OPENAI_MODEL,
+        tools=[{"type": "web_search_preview"}],
+        max_output_tokens=MAX_TOKENS,
+        input=build_prompt(ticker, name),
+    )
+    return extract_json(resp.output_text)
+
+
+PROVIDERS = {
+    "claude": analyze_with_claude,
+    "anthropic": analyze_with_claude,
+    "openai": analyze_with_openai,
+    "chatgpt": analyze_with_openai,
+}
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "claude": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "openai": bool(os.getenv("OPENAI_API_KEY")),
+    }
+
+
+@app.post("/analyze")
+def analyze(req: AnalyzeRequest):
+    if not req.ticker:
+        raise HTTPException(400, "ticker is required")
+
+    fn = PROVIDERS.get(req.provider.lower())
+    if not fn:
+        raise HTTPException(400, f"unknown provider: {req.provider}")
+
+    try:
+        data = fn(req.ticker, req.name)
+    except HTTPException:
+        raise
+    except json.JSONDecodeError:
+        raise HTTPException(502, "The model did not return valid JSON. Try again.")
+    except Exception as e:  # noqa: BLE001 — surface provider errors to the client
+        raise HTTPException(502, f"{type(e).__name__}: {e}")
+
+    return {
+        "provider": req.provider,
+        "model": ANTHROPIC_MODEL if fn is analyze_with_claude else OPENAI_MODEL,
+        "ticker": req.ticker,
+        "analysis": data,
+        "disclaimer": (
+            "AI-generated analysis for research purposes only. This is NOT financial "
+            "advice. AI can be inaccurate or out of date — do not rely on it for "
+            "investment decisions. Always do your own research and consult a licensed "
+            "financial advisor."
+        ),
+    }

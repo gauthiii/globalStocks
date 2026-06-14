@@ -1,16 +1,47 @@
-# React + Vite
+# GlobalStocks
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A React + Vite portfolio dashboard for US and India stocks/funds, with an
+optional FastAPI backend that runs Claude / ChatGPT agents for per-stock
+research notes.
 
-Currently, two official plugins are available:
+## Frontend
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev      # dev server
+npm run build    # production build
+```
 
-## React Compiler
+## AI Analysis backend (optional)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Each stock's detail modal has **Claude** and **ChatGPT** buttons. Clicking one
+calls the backend, which asks that agent (with live web search) for a short
+analysis: recent performance (week / month / quarter / year) with reasons,
+latest news with sources and a source-reputation score, and the likely impact
+of buying. A disclaimer is always shown — the output is for research only and
+must not be treated as financial advice.
 
-## Expanding the ESLint configuration
+### Setup
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+1. Copy `.env.example` to `.env` and fill in your keys:
+
+   ```
+   ANTHROPIC_API_KEY=...
+   OPENAI_API_KEY=...
+   ANTHROPIC_MODEL=claude-haiku-4-5
+   OPENAI_MODEL=gpt-4o-mini
+   ```
+
+   `.env` is gitignored — never commit real keys.
+
+2. Run the backend:
+
+   ```bash
+   cd backend
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   uvicorn main:app --reload --port 8000
+   ```
+
+The frontend talks to `http://localhost:8000` by default; override with
+`VITE_API_URL`.

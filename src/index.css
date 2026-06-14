@@ -939,3 +939,158 @@ button {
 .cons-pct.down { color: var(--down); }
 .cons-muted { color: var(--text-muted); font-size: 13px; }
 .cons-down { color: var(--down); font-size: 12px; }
+
+/* ─── AI analysis section ─────────────────────────────────── */
+
+.ai-section {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+.ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.ai-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ai-btn-row { display: flex; gap: 8px; }
+
+.ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+
+.ai-btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
+.ai-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ai-btn.claude.active { border-color: #C96442; color: #C96442; }
+.ai-btn.chatgpt.active { border-color: #10A37F; color: #10A37F; }
+
+.ai-loading, .ai-error {
+  font-size: 13px;
+  padding: 12px 0;
+  color: var(--text-muted);
+}
+.ai-error { color: var(--down); }
+
+.ai-summary {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.ai-subhead {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+}
+
+.ai-perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ai-perf-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-perf-table td {
+  padding: 9px 10px 9px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+
+.ai-perf-period { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+.ai-perf-change { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ai-perf-reason { line-height: 1.45; }
+
+.ai-trend { font-weight: 700; white-space: nowrap; }
+.ai-trend.up { color: var(--up); }
+.ai-trend.down { color: var(--down); }
+
+.ai-news {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: var(--bg-surface);
+}
+
+.ai-news-headline { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.ai-news-impact { font-size: 13px; color: var(--text-secondary); margin-top: 4px; line-height: 1.45; }
+
+.ai-news-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ai-news-meta a { color: var(--text-secondary); text-decoration: underline; }
+.ai-rep strong { color: var(--text-primary); }
+
+.ai-impact { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+.ai-impact > div { margin-bottom: 6px; }
+.ai-impact-label {
+  display: inline-block;
+  min-width: 78px;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ai-disclaimer {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+}
+
+.ai-model-tag {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--text-disabled);
+}

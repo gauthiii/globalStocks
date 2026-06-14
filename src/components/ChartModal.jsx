@@ -6,6 +6,7 @@ import {
 import { useStockData } from '../hooks/useStockData';
 import { useTheme } from '../context/ThemeContext';
 import { TIME_RANGES } from '../config/stocks';
+import AIAnalysis from './AIAnalysis';
 
 function formatPrice(price, currency) {
   if (price == null) return '--';
@@ -371,6 +372,9 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
             currentPrice={data.currentPrice}
           />
         )}
+
+        {/* AI analysis */}
+        <AIAnalysis ticker={displayName} name={stock.name} />
 
         {isMF && (
           <div className="modal-mf-note">
