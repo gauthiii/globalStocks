@@ -3,7 +3,8 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import MiniChart from './components/MiniChart';
 import ChartModal from './components/ChartModal';
 import ConsolidatedView from './components/ConsolidatedView';
-import { TABS, TIME_RANGES, categoriesOf } from './config/stocks';
+import PLCards from './components/PLCards';
+import { TABS, TIME_RANGES, categoriesOf, US_ALL, INDIA_ALL } from './config/stocks';
 
 function SunIcon() {
   return (
@@ -31,7 +32,7 @@ function MoonIcon() {
 
 function Dashboard() {
   const { theme, toggle } = useTheme();
-  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('gs-tab') || 'us-stocks');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('gs-tab') || 'consolidated');
   const [selectedRange, setSelectedRange] = useState(() => localStorage.getItem('gs-range') || '1M');
   const [modal, setModal] = useState(null);
   const [query, setQuery] = useState('');
@@ -55,6 +56,12 @@ function Dashboard() {
 
   const categories = useMemo(
     () => (isConsolidated ? [] : ['All', ...categoriesOf(tab.data)]),
+    [tab, isConsolidated]
+  );
+
+  // P/L cards aggregate the entire watchlist of the tab (not the filtered view).
+  const plItems = useMemo(
+    () => (isConsolidated ? [...US_ALL, ...INDIA_ALL] : tab.data.map((s) => ({ ...s, type: tab.type }))),
     [tab, isConsolidated]
   );
 
@@ -127,6 +134,9 @@ function Dashboard() {
             );
           })}
         </div>
+
+        {/* Watchlist P/L summary */}
+        <PLCards key={activeTab} items={plItems} />
 
         {isConsolidated ? (
           <ConsolidatedView

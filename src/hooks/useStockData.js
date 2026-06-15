@@ -92,6 +92,54 @@ function parseMFData(data, range) {
 
 const CORS_PROXY = 'https://corsproxy.io/?url=';
 
+// The dashboard mounts dozens of charts at once (consolidated rows + P/L cards),
+// and the public CORS proxy rate-limits bursts. We funnel every request through a
+// small concurrency gate, dedupe in-flight URLs, and cache raw responses briefly
+// so identical requests (e.g. a row and the modal) reuse one network call.
+const RAW_CACHE = new Map(); // url -> { time, data }
+const INFLIGHT = new Map(); // url -> Promise
+const CACHE_TTL = 60_000;
+
+const MAX_CONCURRENT = 5;
+let active = 0;
+const waiters = [];
+
+function acquireSlot() {
+  if (active < MAX_CONCURRENT) {
+    active++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => waiters.push(resolve)).then(() => {
+    active++;
+  });
+}
+
+function releaseSlot() {
+  active--;
+  const next = waiters.shift();
+  if (next) next();
+}
+
+function loadRaw(url) {
+  const cached = RAW_CACHE.get(url);
+  if (cached && Date.now() - cached.time < CACHE_TTL) return Promise.resolve(cached.data);
+  if (INFLIGHT.has(url)) return INFLIGHT.get(url);
+
+  const promise = acquireSlot()
+    .then(() => fetch(url).then((r) => r.json()))
+    .then((data) => {
+      RAW_CACHE.set(url, { time: Date.now(), data });
+      return data;
+    })
+    .finally(() => {
+      releaseSlot();
+      INFLIGHT.delete(url);
+    });
+
+  INFLIGHT.set(url, promise);
+  return promise;
+}
+
 export function useStockData(symbol, range, interval, type, schemeCode) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -113,16 +161,16 @@ export function useStockData(symbol, range, interval, type, schemeCode) {
         ? `https://api.mfapi.in/mf/${schemeCode}`
         : `${CORS_PROXY}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`)}`;
 
-    fetch(url, { signal: controller.signal })
-      .then((r) => r.json())
+    loadRaw(url)
       .then((raw) => {
+        if (controller.signal.aborted) return;
         const parsed = type === 'mf' ? parseMFData(raw, range) : parseYahooData(raw, range);
         if (!parsed) throw new Error('No data');
         setData(parsed);
         setLoading(false);
       })
       .catch((err) => {
-        if (err.name === 'AbortError') return;
+        if (controller.signal.aborted) return;
         setError(err.message);
         setLoading(false);
       });

@@ -7,10 +7,17 @@ export const US_STOCKS = [
   { symbol: 'MSFT', name: 'Microsoft Corp.', category: 'Technology' },
   { symbol: 'NFLX', name: 'Netflix Inc.', category: 'Communication' },
   { symbol: 'NVDA', name: 'NVIDIA Corp.', category: 'Technology' },
-  { symbol: 'SPCX', name: 'SPDR S&P 500 ETF', category: 'Index / ETF' },
+  { symbol: 'SPCX', name: 'SpaceX', category: 'Technology' },
   { symbol: 'KO', name: 'Coca-Cola Co.', category: 'Consumer Staples' },
   { symbol: 'UBER', name: 'Uber Technologies', category: 'Technology' },
   { symbol: 'WMT', name: 'Walmart Inc.', category: 'Consumer Staples' },
+  { symbol: 'SNDK', name: 'SanDisk Corp.', category: 'Technology' },
+  { symbol: 'MU', name: 'Micron Technology', category: 'Technology' },
+  { symbol: 'AMD', name: 'Advanced Micro Devices', category: 'Technology' },
+  { symbol: 'MRVL', name: 'Marvell Technology', category: 'Technology' },
+  { symbol: 'ASML', name: 'ASML Holding N.V.', category: 'Technology' },
+  { symbol: 'TSM', name: 'Taiwan Semiconductor (TSMC)', category: 'Technology' },
+  { symbol: 'TSLA', name: 'Tesla Inc.', category: 'Consumer Discretionary' },
 ];
 
 export const US_FUNDS = [
@@ -54,11 +61,11 @@ export const TIME_RANGES = [
 ];
 
 export const TABS = [
+  { id: 'consolidated', label: '📊 Consolidated', consolidated: true },
   { id: 'us-stocks', label: '🇺🇸 US Stocks', data: US_STOCKS, type: 'yahoo' },
   { id: 'us-funds', label: '🇺🇸 US Funds', data: US_FUNDS, type: 'yahoo' },
   { id: 'india-stocks', label: '🇮🇳 India Stocks', data: INDIA_STOCKS, type: 'yahoo' },
   { id: 'india-funds', label: '🇮🇳 India Funds', data: INDIA_FUNDS, type: 'mf' },
-  { id: 'consolidated', label: '📊 Consolidated', consolidated: true },
 ];
 
 // Every instrument tagged with its market + fetch type, for the consolidated view.
