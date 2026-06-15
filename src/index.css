@@ -1138,3 +1138,41 @@ button {
 @media (max-width: 720px) {
   .pl-cards { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── P/L header + Telegram button ────────────────────────── */
+.pl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pl-header-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.pl-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pl-tg-btn {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.pl-tg-btn:hover { opacity: 0.88; }
+.pl-tg-btn:disabled { opacity: 0.5; cursor: default; }
+.pl-tg-status { font-size: 12px; font-weight: 600; }
+.pl-tg-status.ok { color: var(--up); }
+.pl-tg-status.err { color: var(--down); }

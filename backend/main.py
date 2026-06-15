@@ -49,6 +49,11 @@ class AnalyzeRequest(BaseModel):
     provider: str = "claude"  # "claude" | "openai"
 
 
+class NotifyRequest(BaseModel):
+    text: str
+    chat_id: str | None = None  # override the default TELEGRAM_CHAT_ID if provided
+
+
 # ── Prompt ─────────────────────────────────────────────────────────────────
 
 def build_prompt(ticker: str, name: str | None) -> str:
@@ -153,6 +158,34 @@ PROVIDERS = {
 }
 
 
+# ── Telegram ───────────────────────────────────────────────────────────────
+
+def send_telegram(text: str, chat_id: str | None = None) -> dict:
+    """Send a message via the Telegram Bot API. Token/chat id come from .env."""
+    import httpx
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    if not token:
+        raise HTTPException(500, "TELEGRAM_BOT_TOKEN is not set in .env")
+    if not chat:
+        raise HTTPException(500, "TELEGRAM_CHAT_ID is not set in .env (or pass chat_id)")
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    resp = httpx.post(url, json=payload, timeout=15)
+    data = resp.json()
+    if not data.get("ok"):
+        # Telegram returns a human-readable "description" on error.
+        raise HTTPException(502, f"Telegram error: {data.get('description', resp.text)}")
+    return data
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -161,7 +194,25 @@ def health():
         "ok": True,
         "claude": bool(os.getenv("ANTHROPIC_API_KEY")),
         "openai": bool(os.getenv("OPENAI_API_KEY")),
+        "telegram": bool(os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")),
     }
+
+
+@app.get("/telegram/health")
+def telegram_health():
+    return {
+        "configured": bool(os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")),
+        "hasToken": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        "hasChatId": bool(os.getenv("TELEGRAM_CHAT_ID")),
+    }
+
+
+@app.post("/notify")
+def notify(req: NotifyRequest):
+    if not req.text.strip():
+        raise HTTPException(400, "text is required")
+    result = send_telegram(req.text, req.chat_id)
+    return {"ok": True, "message_id": result.get("result", {}).get("message_id")}
 
 
 @app.post("/analyze")

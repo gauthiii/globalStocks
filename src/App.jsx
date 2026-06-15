@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import MiniChart from './components/MiniChart';
 import ChartModal from './components/ChartModal';
 import ConsolidatedView from './components/ConsolidatedView';
-import PLCards from './components/PLCards';
+import PLCards, { PERIODS, formatMoney } from './components/PLCards';
 import { TABS, TIME_RANGES, categoriesOf, US_ALL, INDIA_ALL } from './config/stocks';
+import { API_URL } from './config/api';
 
 function SunIcon() {
   return (
@@ -38,6 +39,11 @@ function Dashboard() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
   const [sortBy, setSortBy] = useState('default');
+  const [tgStatus, setTgStatus] = useState(null); // null | 'sending' | 'sent' | error string
+
+  // Latest P/L totals reported by PLCards, kept in a ref to avoid re-renders.
+  const plRef = useRef({ totals: {}, currencies: [], loaded: 0, total: 0 });
+  const handleTotals = useCallback((t) => { plRef.current = t; }, []);
 
   useEffect(() => { localStorage.setItem('gs-tab', activeTab); }, [activeTab]);
   useEffect(() => { localStorage.setItem('gs-range', selectedRange); }, [selectedRange]);
@@ -88,6 +94,46 @@ function Dashboard() {
     return order.map((cat) => ({ cat, items: visible.filter((s) => s.category === cat) }));
   }, [visible, isConsolidated]);
 
+  // Build a P/L summary and push it to Telegram via the backend.
+  const sendToTelegram = async () => {
+    const { totals, currencies, loaded, total } = plRef.current;
+    if (!currencies.length) {
+      setTgStatus('No data loaded yet');
+      return;
+    }
+    const sign = (v) => (v >= 0 ? '+' : '−');
+    const lines = [
+      `📊 <b>${tab.label}</b> — P/L summary`,
+      `<i>Equal-weighted · ${loaded}/${total} loaded</i>`,
+      '',
+    ];
+    for (const p of PERIODS) {
+      const parts = currencies.map((cur) => {
+        const v = totals[cur][p.key];
+        return `${sign(v)}${formatMoney(Math.abs(v), cur)}`;
+      });
+      lines.push(`<b>${p.label}:</b> ${parts.join('  |  ')}`);
+    }
+    const text = lines.join('\n');
+
+    setTgStatus('sending');
+    try {
+      const r = await fetch(`${API_URL}/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${r.status}`);
+      }
+      setTgStatus('sent');
+      setTimeout(() => setTgStatus(null), 2500);
+    } catch (e) {
+      setTgStatus(e.message || 'Failed');
+    }
+  };
+
   return (
     <div className="app">
       {/* Top bar */}
@@ -136,7 +182,20 @@ function Dashboard() {
         </div>
 
         {/* Watchlist P/L summary */}
-        <PLCards key={activeTab} items={plItems} />
+        <div className="pl-header">
+          <span className="pl-header-title">Watchlist P/L</span>
+          <div className="pl-header-actions">
+            {tgStatus && tgStatus !== 'sending' && (
+              <span className={`pl-tg-status ${tgStatus === 'sent' ? 'ok' : 'err'}`}>
+                {tgStatus === 'sent' ? '✓ Sent to Telegram' : tgStatus}
+              </span>
+            )}
+            <button className="pl-tg-btn" onClick={sendToTelegram} disabled={tgStatus === 'sending'}>
+              {tgStatus === 'sending' ? 'Sending…' : '✈ Send → Telegram'}
+            </button>
+          </div>
+        </div>
+        <PLCards key={activeTab} items={plItems} onTotals={handleTotals} />
 
         {isConsolidated ? (
           <ConsolidatedView

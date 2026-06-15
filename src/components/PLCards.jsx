@@ -38,12 +38,12 @@ function PLFetcher({ stock, onResult }) {
   return null;
 }
 
-function formatMoney(v, currency) {
+export function formatMoney(v, currency) {
   const sym = currency === 'INR' ? '₹' : '$';
   return `${sym}${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-const PERIODS = [
+export const PERIODS = [
   { key: 'd1', label: 'Daily P/L' },
   { key: 'd5', label: '5-Day P/L' },
   { key: 'w1', label: '1-Week P/L' },
@@ -52,7 +52,7 @@ const PERIODS = [
 
 // Equal-weighted (1 unit per instrument) P/L across a watchlist, summed per
 // currency so the consolidated view can show both $ and ₹ side by side.
-export default function PLCards({ items }) {
+export default function PLCards({ items, onTotals }) {
   const [results, setResults] = useState({});
 
   // Reset accumulated results whenever the instrument set changes (tab switch).
@@ -85,6 +85,11 @@ export default function PLCards({ items }) {
   const currencies = Object.keys(totals).sort();
   const loaded = Object.keys(results).length;
   const total = items.length;
+
+  // Surface totals + load progress to the parent (for the Telegram alert).
+  useEffect(() => {
+    onTotals?.({ totals, currencies, loaded, total });
+  }, [onTotals, totals, currencies, loaded, total]);
 
   return (
     <div className="pl-wrap">
