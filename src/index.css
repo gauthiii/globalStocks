@@ -445,6 +445,16 @@ button {
 
 .modal-chart {
   height: 380px;
+  display: flex;
+  flex-direction: column;
+}
+.modal-chart-price {
+  flex: 1;
+  min-height: 0;
+}
+.modal-chart-vol {
+  height: 84px;
+  flex: 0 0 auto;
 }
 
 .modal-mf-note {
@@ -1176,3 +1186,14 @@ button {
 .pl-tg-status { font-size: 12px; font-weight: 600; }
 .pl-tg-status.ok { color: var(--up); }
 .pl-tg-status.err { color: var(--down); }
+
+/* ── OHLC tooltip grid ───────────────────────────────────── */
+.chart-tooltip-ohlc {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px 12px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}

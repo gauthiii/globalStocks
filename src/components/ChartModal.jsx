@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
-  ResponsiveContainer, AreaChart, Area,
+  ResponsiveContainer, ComposedChart, Area, Line, Bar, Cell,
   XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
 } from 'recharts';
 import { useStockData } from '../hooks/useStockData';
@@ -145,7 +145,11 @@ function HypotheticalSection({ data6M, currency, currentPrice }) {
             type="number"
             value={amount}
             min={1}
-            onChange={(e) => setAmount(Number(e.target.value))}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              setAmount(Number.isFinite(n) && n > 0 ? n : 0);
+            }}
+            onBlur={() => { if (!amount || amount < 1) setAmount(defaultAmount); }}
           />
         </div>
       </div>
@@ -189,6 +193,22 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
     stock.symbol, '6mo', '1d', type, stock.schemeCode
   );
 
+  // Y domain spanning the full high→low range so the line isn't clipped.
+  const priceDomain = useMemo(() => {
+    const pts = data?.points;
+    if (!pts?.length) return ['auto', 'auto'];
+    let lo = Infinity, hi = -Infinity;
+    for (const p of pts) {
+      const l = p.low ?? p.price;
+      const h = p.high ?? p.price;
+      if (l != null && l < lo) lo = l;
+      if (h != null && h > hi) hi = h;
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ['auto', 'auto'];
+    const pad = (hi - lo) * 0.05 || hi * 0.01;
+    return [lo - pad, hi + pad];
+  }, [data]);
+
   useEffect(() => {
     const fn = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', fn);
@@ -226,7 +246,15 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
             <span> · {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
           )}
         </div>
-        <div className="chart-tooltip-price">{formatPrice(payload[0].value, data?.currency)}</div>
+        <div className="chart-tooltip-price">{formatPrice(p.price, data?.currency)}</div>
+        {p.open != null && (
+          <div className="chart-tooltip-ohlc">
+            <span>O {formatPrice(p.open, data?.currency)}</span>
+            <span>H {formatPrice(p.high, data?.currency)}</span>
+            <span>L {formatPrice(p.low, data?.currency)}</span>
+            <span>C {formatPrice(p.price, data?.currency)}</span>
+          </div>
+        )}
         {p.volume != null && (
           <div className="chart-tooltip-vol">Vol: {formatVolume(p.volume)}</div>
         )}
@@ -317,8 +345,9 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
           ) : error ? (
             <div className="error-state">Failed to load. Try another time range.</div>
           ) : (
+          <div className="modal-chart-price">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data?.points} margin={{ top: 8, right: 8, bottom: 20, left: 8 }}>
+              <ComposedChart data={data?.points} margin={{ top: 8, right: 8, bottom: 20, left: 8 }}>
                 <defs>
                   <linearGradient id="modal-fill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={lineColor} stopOpacity={0.20} />
@@ -335,10 +364,13 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
                   interval="preserveStartEnd"
                 />
                 <YAxis
-                  domain={['auto', 'auto']}
+                  domain={priceDomain}
                   tickFormatter={(v) => {
                     const sym = data?.currency === 'INR' ? '₹' : '$';
-                    return v >= 1000 ? `${sym}${(v / 1000).toFixed(1)}k` : `${sym}${v.toFixed(0)}`;
+                    if (v >= 1000) return `${sym}${(v / 1000).toFixed(1)}k`;
+                    if (v >= 100) return `${sym}${v.toFixed(0)}`;
+                    if (v >= 1) return `${sym}${v.toFixed(2)}`;
+                    return `${sym}${v.toFixed(3)}`;
                   }}
                   tick={{ fill: axisTickColor, fontSize: 11, fontFamily: 'DM Sans, sans-serif' }}
                   axisLine={false}
@@ -350,17 +382,58 @@ export default function ChartModal({ stock, type, selectedRange, onRangeChange, 
                 {data?.previousClose && (
                   <ReferenceLine y={data.previousClose} stroke={refLineColor} strokeDasharray="3 3" strokeWidth={1} />
                 )}
-                <Area
-                  type="monotone"
-                  dataKey="price"
-                  stroke={lineColor}
-                  strokeWidth={2}
-                  fill="url(#modal-fill)"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
+                {isMF ? (
+                  <Area
+                    type="monotone"
+                    dataKey="price"
+                    stroke={lineColor}
+                    strokeWidth={2}
+                    fill="url(#modal-fill)"
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                ) : (
+                  <Line
+                    type="monotone"
+                    dataKey="price"
+                    stroke={lineColor}
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
+          </div>
+          )}
+          {!loading && !error && !isMF && data?.points?.some((p) => p.volume != null) && (
+            <div className="modal-chart-vol">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={data?.points} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+                  <XAxis dataKey="time" hide />
+                  <YAxis
+                    width={62}
+                    orientation="right"
+                    domain={[0, 'dataMax']}
+                    tickFormatter={formatVolume}
+                    tick={{ fill: axisTickColor, fontSize: 9, fontFamily: 'DM Sans, sans-serif' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickCount={3}
+                  />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Bar dataKey="volume" isAnimationActive={false} maxBarSize={16}>
+                    {data.points.map((p, i) => (
+                      <Cell
+                        key={i}
+                        fill={(p.close ?? p.price) >= (p.open ?? p.price) ? upColor : downColor}
+                        fillOpacity={0.55}
+                      />
+                    ))}
+                  </Bar>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
 
