@@ -92,11 +92,20 @@ def _fetch_mf(client, scheme):
     return "INR", points
 
 
-def build_digest():
-    """Returns (message_text, stats) without sending."""
+def build_digest(market="all"):
+    """Returns (message_text, stats) without sending.
+
+    market: "india" | "us" | "all" — which watchlist to include.
+    """
+    market = market.lower()
+    do_us = market in ("all", "us")
+    do_india = market in ("all", "india")
+
     totals = {}  # currency -> {d1,d5,w1,m1}
     loaded = 0
-    total = len(US_SYMBOLS) + len(INDIA_SYMBOLS) + len(INDIA_FUND_SCHEMES)
+    total = (len(US_SYMBOLS) if do_us else 0) + (
+        len(INDIA_SYMBOLS) + len(INDIA_FUND_SCHEMES) if do_india else 0
+    )
 
     def add(currency, deltas):
         nonlocal loaded
@@ -108,18 +117,20 @@ def build_digest():
             bucket[k] += deltas[k]
 
     with httpx.Client(timeout=20, follow_redirects=True) as client:
-        for sym in US_SYMBOLS + INDIA_SYMBOLS:
+        yahoo_syms = (US_SYMBOLS if do_us else []) + (INDIA_SYMBOLS if do_india else [])
+        for sym in yahoo_syms:
             try:
                 cur, pts = _fetch_yahoo(client, sym)
                 add(cur, _deltas(pts))
             except Exception as e:  # noqa: BLE001 — skip a bad ticker, keep going
                 print(f"skip {sym}: {e}", file=sys.stderr)
-        for scheme in INDIA_FUND_SCHEMES:
-            try:
-                cur, pts = _fetch_mf(client, scheme)
-                add(cur, _deltas(pts))
-            except Exception as e:  # noqa: BLE001
-                print(f"skip MF {scheme}: {e}", file=sys.stderr)
+        if do_india:
+            for scheme in INDIA_FUND_SCHEMES:
+                try:
+                    cur, pts = _fetch_mf(client, scheme)
+                    add(cur, _deltas(pts))
+                except Exception as e:  # noqa: BLE001
+                    print(f"skip MF {scheme}: {e}", file=sys.stderr)
 
     periods = [("d1", "Daily P/L"), ("d5", "5-Day P/L"), ("w1", "1-Week P/L"), ("m1", "1-Month P/L")]
     currencies = sorted(totals)
@@ -129,7 +140,12 @@ def build_digest():
         sign = "+" if v >= 0 else "−"
         return f"{sign}{sym}{abs(v):,.2f}"
 
-    lines = ["📊 <b>GlobalStocks — Daily P/L</b>", f"<i>Equal-weighted · {loaded}/{total} loaded</i>", ""]
+    title = {"india": "🇮🇳 India", "us": "🇺🇸 US", "all": "🌐 Global"}[market]
+    lines = [
+        f"📊 <b>GlobalStocks {title} — P/L</b>",
+        f"<i>Equal-weighted · {loaded}/{total} loaded</i>",
+        "",
+    ]
     for key, label in periods:
         parts = [money(totals[c][key], c) for c in currencies]
         lines.append(f"<b>{label}:</b> {'  |  '.join(parts)}" if parts else f"<b>{label}:</b> n/a")
@@ -140,9 +156,13 @@ def build_digest():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="print, don't send")
+    parser.add_argument(
+        "--market", choices=["india", "us", "all"], default="all",
+        help="which watchlist to include (default: all)",
+    )
     args = parser.parse_args()
 
-    text, stats = build_digest()
+    text, stats = build_digest(args.market)
     if args.dry_run:
         print(text)
         return
