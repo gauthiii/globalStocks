@@ -215,6 +215,29 @@ def notify(req: NotifyRequest):
     return {"ok": True, "message_id": result.get("result", {}).get("message_id")}
 
 
+@app.get("/cron")
+def cron(market: str = "all", dry_run: bool = False):
+    """Scan the watchlist for period highs/lows and push Telegram alerts.
+
+    Intended to be hit by an external scheduler (cron / cloud trigger).
+
+    Query params:
+        market:  "all" | "us" | "india"  (default "all")
+        dry_run: if true, detect and return alerts without sending them.
+    """
+    from cron import scan_watchlist
+
+    if market.lower() not in ("all", "us", "india"):
+        raise HTTPException(400, "market must be one of: all, us, india")
+
+    try:
+        return scan_watchlist(market, dry_run=dry_run)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — surface scan errors to the caller
+        raise HTTPException(502, f"{type(e).__name__}: {e}")
+
+
 @app.post("/analyze")
 def analyze(req: AnalyzeRequest):
     if not req.ticker:
