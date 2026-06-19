@@ -108,6 +108,36 @@ WINDOWS = [
 MF_MIN_DAYS = 7
 
 
+# ── Market hours ─────────────────────────────────────────────────────────────
+# Regular equity sessions, Mon–Fri (holidays are NOT accounted for):
+#   India (NSE):        09:15–15:30 Asia/Kolkata
+#   US (NYSE/Nasdaq):   09:30–16:00 America/New_York (DST handled by tz database)
+# The two sessions never overlap in UTC, so at most one is open at a time.
+NSE_OPEN_MIN, NSE_CLOSE_MIN = 9 * 60 + 15, 15 * 60 + 30
+US_OPEN_MIN, US_CLOSE_MIN = 9 * 60 + 30, 16 * 60
+
+
+def _in_session(now_utc, tz_name, open_min, close_min):
+    from zoneinfo import ZoneInfo
+
+    local = now_utc.astimezone(ZoneInfo(tz_name))
+    if local.weekday() >= 5:  # Sat/Sun
+        return False
+    minutes = local.hour * 60 + local.minute
+    return open_min <= minutes <= close_min
+
+
+def current_open_market(now_utc=None):
+    """Return the market whose regular session is open right now: "india", "us",
+    or None if neither is open. Weekday + time only — exchange holidays ignored."""
+    now_utc = now_utc or datetime.now(timezone.utc)
+    if _in_session(now_utc, "Asia/Kolkata", NSE_OPEN_MIN, NSE_CLOSE_MIN):
+        return "india"
+    if _in_session(now_utc, "America/New_York", US_OPEN_MIN, US_CLOSE_MIN):
+        return "us"
+    return None
+
+
 # ── Fetching ─────────────────────────────────────────────────────────────────
 
 def _fetch_yahoo_hourly(client, symbol):

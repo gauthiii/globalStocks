@@ -216,22 +216,48 @@ def notify(req: NotifyRequest):
 
 
 @app.get("/cron")
-def cron(market: str = "all", dry_run: bool = False):
-    """Scan the watchlist for period highs/lows and push Telegram alerts.
+def cron():
+    """Market-aware watchlist high/low scan. No parameters.
 
-    Intended to be hit by an external scheduler (cron / cloud trigger).
-
-    Query params:
-        market:  "all" | "us" | "india"  (default "all")
-        dry_run: if true, detect and return alerts without sending them.
+    Detects which regular equity session is open right now and scans only that
+    market: India (NSE) -> India watchlist, US -> US watchlist. If neither is
+    open, takes NO Telegram action and returns a closed status. Safe to hit on a
+    fixed external schedule — it self-gates on market hours.
     """
-    from cron import scan_watchlist
+    from cron import current_open_market, scan_watchlist
 
-    if market.lower() not in ("all", "us", "india"):
-        raise HTTPException(400, "market must be one of: all, us, india")
+    market = current_open_market()
+    if market is None:
+        return {
+            "status": "closed",
+            "market": None,
+            "checked": 0,
+            "flags": 0,
+            "parts": 0,
+            "messages": [],
+            "note": "Both markets closed; no Telegram action taken.",
+        }
 
     try:
-        return scan_watchlist(market, dry_run=dry_run)
+        result = scan_watchlist(market)
+        result["status"] = "open"
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — surface scan errors to the caller
+        raise HTTPException(502, f"{type(e).__name__}: {e}")
+
+
+@app.get("/cron-all")
+def cron_all():
+    """Scan BOTH markets (US + India) unconditionally, ignoring market hours,
+    and push the combined result to Telegram. Use for a manual or daily run."""
+    from cron import scan_watchlist
+
+    try:
+        result = scan_watchlist("all")
+        result["status"] = "ran"
+        return result
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001 — surface scan errors to the caller
