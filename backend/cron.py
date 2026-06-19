@@ -1,22 +1,31 @@
 """
 Watchlist high/low scanner for cron.
 
-Fetches the latest values for every US and India instrument in the watchlist and
-checks, for each, whether the latest price is a *period extreme* (the highest or
-lowest value seen) within a set of trailing windows: today, 1 week, 2 weeks,
-3 weeks and 1 month. When it is, an alert is pushed to Telegram naming the
-ticker, the company/fund name, by how much it cleared the prior extreme, and the
-window it happened in.
+On every call this fetches the latest values for every US and India instrument in
+the watchlist and, for each trailing window — 1 day, 5 days, 1 week, 2 weeks,
+3 weeks and 1 month — checks whether the latest value is the highest or lowest
+point inside that window's exact-timestamp range. The flagged instruments are
+grouped by window (chronologically, 1 day → 1 month) and pushed to Telegram as a
+single logical message per call, split into multiple messages (with a gap) if it
+exceeds Telegram's character cap.
 
 Design decisions (confirmed with the user):
-  • "high/low in <window>"  → latest price equals the max/min over that window.
-  • "today"                 → uses intraday (1d / 5m) data for Yahoo tickers;
-                              mutual funds (daily NAV only) skip the today check.
-  • multiple windows        → one alert per ticker, for the LONGEST window it is
-                              an extreme of (windows are nested, so a 1-month
-                              high is also a week high — we report the strongest).
-  • "by how much"           → distance from the prior extreme of that window
-                              (i.e. excluding the current point), absolute + %.
+  • Window  = exact-timestamp trailing range [anchor − N, anchor], where the
+              anchor is the latest available data point (so the latest value is
+              always the window's endpoint being tested). E.g. for a 1-month
+              window anchored at Jun 18 06:10, the range is May 18 06:10 → now.
+  • Flag    = latest value STRICTLY beats the prior max (HIGH) or prior min
+              (LOW) of the window — exact ties (±0.00) are not flagged.
+  • Data    = Yahoo HOURLY bars (range=3mo, interval=1h) for all six windows, so
+              short windows (1d / 5d) are meaningful. Mutual funds publish one
+              NAV per day, so they are checked only in the 1-week → 1-month
+              windows and skipped for 1 day / 5 days.
+  • Output  = grouped by window; one line per flagged instrument:
+              "<ticker> (<name>) — <current price> — HIGH/LOW by ±diff (±%)",
+              where the diff is measured against the prior extreme of that window
+              (i.e. excluding the current point).
+  • Send    = one message per call, split under the 4096-char cap, with a 5–10s
+              gap between parts to respect the Telegram rate limit.
 
 This module is import-safe (no side effects) so the FastAPI app can call
 `scan_watchlist()` from the /cron endpoint, and it can also be run standalone.
@@ -24,6 +33,7 @@ This module is import-safe (no side effects) so the FastAPI app can call
 
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -34,13 +44,12 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 DAY_MS = 86_400_000
 
 # Telegram caps a single message at 4096 chars; stay safely under it. When a scan
-# produces more alerts than fit, split into multiple messages and pause between
+# produces more flags than fit, split into multiple messages and pause between
 # sends to avoid hitting the Bot API rate limit.
 TELEGRAM_MAX_CHARS = 3800
 SEND_GAP_SECONDS = 7
 
 # ── Watchlist (mirror of ../src/config/stocks.js) ────────────────────────────
-# Each entry: symbol/scheme, human name, market, and fetch kind.
 US_INSTRUMENTS = [
     ("GOOGL", "Alphabet Inc."),
     ("AMZN", "Amazon.com Inc."),
@@ -85,24 +94,27 @@ INDIA_FUNDS = [
     ("122639", "Parag Parikh Flexi Cap Fund"),
 ]
 
-# Trailing windows, longest first. "today" is handled specially (intraday).
-# (key, label, days)  — days is None for the intraday "today" window.
+# Trailing windows, chronological (shortest first). (label, days)
 WINDOWS = [
-    ("m1", "1 month", 30),
-    ("w3", "3 weeks", 21),
-    ("w2", "2 weeks", 14),
-    ("w1", "1 week", 7),
-    ("today", "today", None),
+    ("1 Day", 1),
+    ("5 Days", 5),
+    ("1 Week", 7),
+    ("2 Weeks", 14),
+    ("3 Weeks", 21),
+    ("1 Month", 30),
 ]
+
+# Mutual funds (daily NAV) only participate in windows at least this many days.
+MF_MIN_DAYS = 7
 
 
 # ── Fetching ─────────────────────────────────────────────────────────────────
 
-def _fetch_yahoo_daily(client, symbol):
-    """Daily closes over the last ~3 months: list of (time_ms, close)."""
+def _fetch_yahoo_hourly(client, symbol):
+    """Hourly bars over the last ~3 months: list of (time_ms, price) oldest->newest."""
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        "?range=3mo&interval=1d&includePrePost=false"
+        "?range=3mo&interval=1h&includePrePost=false"
     )
     r = client.get(url, headers={"User-Agent": "Mozilla/5.0"})
     res = r.json()["chart"]["result"][0]
@@ -113,24 +125,8 @@ def _fetch_yahoo_daily(client, symbol):
     return currency, points
 
 
-def _fetch_yahoo_intraday(client, symbol):
-    """Today's intraday prices (5m bars): list of (time_ms, price)."""
-    url = (
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        "?range=1d&interval=5m&includePrePost=false"
-    )
-    r = client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    res = r.json()["chart"]["result"][0]
-    ts = res.get("timestamp") or []
-    closes = res["indicators"]["quote"][0].get("close") or []
-    points = [(t * 1000, c) for t, c in zip(ts, closes) if c is not None]
-    return points
-
-
 def _fetch_mf_daily(client, scheme):
-    """Daily NAV over the last ~3 months: list of (time_ms, nav)."""
-    from datetime import datetime, timezone
-
+    """Daily NAV over the last ~3 months: list of (time_ms, nav) oldest->newest."""
     r = client.get(f"https://api.mfapi.in/mf/{scheme}")
     rows = r.json().get("data", [])
     points = []
@@ -146,67 +142,60 @@ def _fetch_mf_daily(client, scheme):
 
 # ── Extreme detection ────────────────────────────────────────────────────────
 
-def _window_extreme(points, days, now_ms):
+def _check_window(points, days):
     """For the trailing `days` window ending at the latest point, decide whether
-    the latest price is a high and/or a low, and by how much it cleared the prior
+    the latest value is a high and/or low, and by how much it cleared the prior
     extreme (the extreme of every *other* point in the window).
 
-    Returns a dict, or None if there isn't enough data.
+    Returns a list of (kind, amount, pct) results, possibly empty.
     """
     if len(points) < 2:
-        return None
-    cutoff = now_ms - days * DAY_MS
+        return []
+    anchor = points[-1][0]
+    cutoff = anchor - days * DAY_MS
     window = [p for p in points if p[0] >= cutoff]
     if len(window) < 2:
-        return None
+        return []
 
     latest = window[-1][1]
     prior = [p for _, p in window[:-1]]  # exclude the current point
     prior_max = max(prior)
     prior_min = min(prior)
 
-    out = {"latest": latest}
-    if latest >= prior_max:
-        out["high"] = {
-            "prior": prior_max,
-            "amount": latest - prior_max,
-            "pct": ((latest - prior_max) / prior_max * 100) if prior_max else 0.0,
-        }
-    if latest <= prior_min:
-        out["low"] = {
-            "prior": prior_min,
-            "amount": prior_min - latest,
-            "pct": ((prior_min - latest) / prior_min * 100) if prior_min else 0.0,
-        }
+    # Require a *strict* new extreme — the latest value must beat the prior
+    # extreme, not merely tie it (ties produce meaningless ±0.00 noise).
+    out = []
+    if latest > prior_max:
+        amount = latest - prior_max
+        out.append(("high", amount, (amount / prior_max * 100) if prior_max else 0.0))
+    if latest < prior_min:
+        amount = prior_min - latest
+        out.append(("low", amount, (amount / prior_min * 100) if prior_min else 0.0))
     return out
-
-
-def _longest_extreme(daily, intraday, now_ms):
-    """Walk windows longest -> shortest and return the strongest high and/or low
-    the latest price represents. `intraday` may be None (mutual funds)."""
-    high = None
-    low = None
-    for key, label, days in WINDOWS:
-        if key == "today":
-            if not intraday:
-                continue
-            ex = _window_extreme(intraday, 1, now_ms)
-        else:
-            ex = _window_extreme(daily, days, now_ms)
-        if not ex:
-            continue
-        if high is None and "high" in ex:
-            high = {"window": label, "latest": ex["latest"], **ex["high"]}
-        if low is None and "low" in ex:
-            low = {"window": label, "latest": ex["latest"], **ex["low"]}
-    return high, low
 
 
 # ── Formatting ───────────────────────────────────────────────────────────────
 
+def _money(v, currency):
+    sym = "₹" if currency == "INR" else "$"
+    return f"{sym}{v:,.2f}"
+
+
+def _format_line(flag):
+    emoji = "🚀" if flag["kind"] == "high" else "🔻"
+    word = "HIGH" if flag["kind"] == "high" else "LOW"
+    sign = "+" if flag["kind"] == "high" else "−"
+    return (
+        f"{emoji} <b>{flag['symbol']}</b> ({flag['name']}) — "
+        f"{_money(flag['latest'], flag['currency'])} — "
+        f"{word} by {sign}{_money(flag['amount'], flag['currency'])} "
+        f"({sign}{flag['pct']:.2f}%)"
+    )
+
+
 def _chunk_blocks(blocks, limit=TELEGRAM_MAX_CHARS):
     """Pack text blocks into messages no longer than `limit` chars, splitting on
-    block boundaries (so an individual alert is never cut in half). A single
+    block boundaries (so a window section is never cut in half). A single
     oversized block is emitted on its own as a last resort."""
     messages = []
     current = ""
@@ -223,35 +212,15 @@ def _chunk_blocks(blocks, limit=TELEGRAM_MAX_CHARS):
     return messages
 
 
-def _money(v, currency):
-    sym = "₹" if currency == "INR" else "$"
-    return f"{sym}{v:,.2f}"
-
-
-def _format_alert(symbol, name, currency, kind, info):
-    """kind: 'high' | 'low'. Returns an HTML Telegram message."""
-    emoji = "🚀📈" if kind == "high" else "🔻📉"
-    word = "HIGH" if kind == "high" else "LOW"
-    direction = "above" if kind == "high" else "below"
-    sign = "+" if kind == "high" else "−"
-    return (
-        f"{emoji} <b>{symbol}</b> — new {info['window']} {word}\n"
-        f"<i>{name}</i>\n"
-        f"Current: <b>{_money(info['latest'], currency)}</b>\n"
-        f"{sign}{_money(info['amount'], currency)} ({sign}{info['pct']:.2f}%) "
-        f"{direction} the prior {info['window']} {word.lower()} "
-        f"({_money(info['prior'], currency)})"
-    )
-
-
 # ── Scan ─────────────────────────────────────────────────────────────────────
 
 def scan_watchlist(market="all", dry_run=False, send=None):
-    """Fetch the watchlist, detect period extremes, and (optionally) alert.
+    """Fetch the watchlist, detect per-window extremes, group by window, and
+    (optionally) push the result to Telegram.
 
     market: "india" | "us" | "all".
-    dry_run: if True, build alerts but don't send.
-    send: callable(text) used to deliver an alert (defaults to Telegram sender).
+    dry_run: if True, build the message(s) but don't send.
+    send: callable(text) used to deliver a message (defaults to Telegram sender).
 
     Returns a summary dict describing what was checked and what fired.
     """
@@ -262,38 +231,31 @@ def scan_watchlist(market="all", dry_run=False, send=None):
     if send is None and not dry_run:
         from main import send_telegram as send  # lazy import to avoid a cycle
 
-    alerts = []
+    grouped = {label: [] for label, _ in WINDOWS}
     checked = 0
     errors = []
 
-    def handle(symbol, name, currency, daily, intraday, now_ms):
+    def handle(symbol, name, currency, points, is_mf):
         nonlocal checked
         checked += 1
-        high, low = _longest_extreme(daily, intraday, now_ms)
-        for kind, info in (("high", high), ("low", low)):
-            if not info:
+        for label, days in WINDOWS:
+            if is_mf and days < MF_MIN_DAYS:
                 continue
-            text = _format_alert(symbol, name, currency, kind, info)
-            alerts.append({
-                "symbol": symbol, "name": name, "kind": kind,
-                "window": info["window"], "latest": info["latest"],
-                "amount": info["amount"], "pct": round(info["pct"], 2),
-                "currency": currency, "text": text,
-            })
+            for kind, amount, pct in _check_window(points, days):
+                grouped[label].append({
+                    "symbol": symbol, "name": name, "currency": currency,
+                    "kind": kind, "latest": points[-1][1],
+                    "amount": amount, "pct": round(pct, 2),
+                })
 
     with httpx.Client(timeout=20, follow_redirects=True) as client:
         yahoo = (US_INSTRUMENTS if do_us else []) + (INDIA_INSTRUMENTS if do_india else [])
         for symbol, name in yahoo:
             try:
-                currency, daily = _fetch_yahoo_daily(client, symbol)
-                if not daily:
-                    raise ValueError("no daily data")
-                try:
-                    intraday = _fetch_yahoo_intraday(client, symbol)
-                except Exception:  # noqa: BLE001 — intraday is best-effort
-                    intraday = None
-                now_ms = daily[-1][0]
-                handle(symbol, name, currency, daily, intraday, now_ms)
+                currency, points = _fetch_yahoo_hourly(client, symbol)
+                if not points:
+                    raise ValueError("no hourly data")
+                handle(symbol, name, currency, points, is_mf=False)
             except Exception as e:  # noqa: BLE001 — skip a bad ticker, keep going
                 errors.append(f"{symbol}: {e}")
                 print(f"skip {symbol}: {e}", file=sys.stderr)
@@ -301,28 +263,35 @@ def scan_watchlist(market="all", dry_run=False, send=None):
         if do_india:
             for scheme, name in INDIA_FUNDS:
                 try:
-                    currency, daily = _fetch_mf_daily(client, scheme)
-                    if not daily:
+                    currency, points = _fetch_mf_daily(client, scheme)
+                    if not points:
                         raise ValueError("no NAV data")
-                    now_ms = daily[-1][0]
-                    handle(scheme, name, currency, daily, None, now_ms)
+                    handle(scheme, name, currency, points, is_mf=True)
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"MF {scheme}: {e}")
                     print(f"skip MF {scheme}: {e}", file=sys.stderr)
 
-    # Combine all triggering tickers into one logical message per cron call,
-    # split into Telegram-sized chunks (4096-char cap) and sent with a gap so we
-    # don't trip the Bot API rate limit.
+    total_flags = sum(len(v) for v in grouped.values())
+
+    # Build one logical message: a section per window (chronological), then split
+    # into Telegram-sized chunks sent with a gap so we don't trip the rate limit.
     messages = []
-    if alerts:
+    if total_flags:
         title = {"india": "🇮🇳 India", "us": "🇺🇸 US", "all": "🌐 Global"}[market]
-        highs = sum(1 for a in alerts if a["kind"] == "high")
-        lows = len(alerts) - highs
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         header = (
             f"📣 <b>GlobalStocks {title} — Highs/Lows</b>\n"
-            f"<i>{highs} high(s) · {lows} low(s)</i>"
+            f"<i>{stamp} · {total_flags} flag(s) across {checked} instruments</i>"
         )
-        messages = _chunk_blocks([header] + [a["text"] for a in alerts])
+        blocks = [header]
+        for label, _ in WINDOWS:  # chronological order
+            flags = grouped[label]
+            if not flags:
+                continue
+            lines = [f"<b>📅 {label}</b>"] + [_format_line(f) for f in flags]
+            blocks.append("\n".join(lines))
+
+        messages = _chunk_blocks(blocks)
         if not dry_run:
             for i, msg in enumerate(messages):
                 if i > 0:
@@ -335,11 +304,11 @@ def scan_watchlist(market="all", dry_run=False, send=None):
     return {
         "market": market,
         "checked": checked,
-        "alerted": len(alerts),
+        "flags": total_flags,
         "dry_run": dry_run,
         "parts": len(messages),
+        "grouped": grouped,
         "messages": messages,
-        "alerts": alerts,
         "errors": errors,
     }
 
@@ -353,8 +322,7 @@ def main():
     args = parser.parse_args()
 
     result = scan_watchlist(args.market, dry_run=args.dry_run)
-    print(f"checked {result['checked']}, alerted {result['alerted']}, "
-          f"parts {result['parts']}")
+    print(f"checked {result['checked']}, flags {result['flags']}, parts {result['parts']}")
     for i, msg in enumerate(result["messages"]):
         print(f"\n--- message {i + 1}/{result['parts']} ---\n{msg}")
     for e in result["errors"]:
