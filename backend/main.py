@@ -15,6 +15,7 @@ Run:
 Keys are read from the project-root .env (ANTHROPIC_API_KEY / OPENAI_API_KEY).
 """
 
+import datetime
 import json
 import os
 import re
@@ -28,10 +29,17 @@ from pydantic import BaseModel
 # Load .env from the project root (one level up from backend/).
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+# Analysis models (Agent 2 — does the actual web-search research).
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-MAX_TOKENS = 5000
+# Prompt-generator models (Agent 1 — writes the research strategy). Fall back to
+# the analysis models so quality can be tuned per-agent purely via .env.
+ANTHROPIC_PROMPT_MODEL = os.getenv("ANTHROPIC_PROMPT_MODEL", ANTHROPIC_MODEL)
+OPENAI_PROMPT_MODEL = os.getenv("OPENAI_PROMPT_MODEL", OPENAI_MODEL)
+
+MAX_TOKENS = 5000        # Agent 2 (analysis) budget.
+PROMPT_MAX_TOKENS = 1500  # Agent 1 (prompt generation) budget.
 
 app = FastAPI(title="GlobalStocks AI Analysis")
 
@@ -56,12 +64,35 @@ class NotifyRequest(BaseModel):
 
 # ── Prompt ─────────────────────────────────────────────────────────────────
 
-def build_prompt(ticker: str, name: str | None) -> str:
+def build_meta_prompt(ticker: str, name: str | None, today: str) -> str:
+    """Agent 1 instruction: ask the model to design a company-specific research
+    strategy prompt. It returns plain prompt text (no JSON, no analysis)."""
     label = f"{ticker}" + (f" ({name})" if name else "")
-    return f"""You are a financial research assistant. Research the security {label} \
-using web search for the latest information, then produce a concise analysis.
+    return f"""You are an expert financial-research prompt engineer. Today's date is {today}.
 
-Return ONLY a JSON object (no markdown, no prose outside the JSON) with EXACTLY this shape:
+Write a detailed research-instruction prompt that another financial-analyst AI \
+will follow to research the security {label}. Tailor it specifically to THIS \
+company: its sector, its home market/region and exchange, and the kinds of \
+catalysts that move it.
+
+The prompt you write MUST instruct the analyst to:
+- Use web search for the LATEST information, anchored to today's date ({today}).
+- Name the most relevant, reputable sources and outlets to search for this \
+specific company/sector/region (e.g. exchange filings, sector-specific outlets, \
+reputable financial press).
+- Specify what kinds of recent news and events matter most for this company \
+(earnings, regulation, products, macro, sector trends, etc.).
+- Explain how to assess the news' impact on the stock over short and long horizons.
+
+Output ONLY the research-instruction prompt text. Do NOT perform the research \
+yourself, do NOT include any JSON, and do NOT add commentary before or after the \
+prompt. Keep it focused and under {PROMPT_MAX_TOKENS} tokens."""
+
+
+def build_json_contract() -> str:
+    """The strict output contract appended to every analysis prompt so the UI
+    always receives the exact JSON shape it renders."""
+    return f"""Return ONLY a JSON object (no markdown, no prose outside the JSON) with EXACTLY this shape:
 
 {{
   "summary": "2-3 sentence overview of how the stock has been performing.",
@@ -92,6 +123,14 @@ reputationScore (0=unreliable, 100=highly reputable). Keep the whole response un
 Output JSON only."""
 
 
+def build_final_prompt(strategy: str) -> str:
+    """Combine Agent 1's strategy with the fixed JSON contract for Agent 2."""
+    return (
+        f"{strategy.strip()}\n\n"
+        f"--- OUTPUT FORMAT (strict) ---\n{build_json_contract()}"
+    )
+
+
 def extract_json(text: str) -> dict:
     """Pull the JSON object out of an LLM response, tolerating code fences."""
     text = text.strip()
@@ -107,21 +146,25 @@ def extract_json(text: str) -> dict:
 
 # ── Providers ──────────────────────────────────────────────────────────────
 
-def analyze_with_claude(ticker: str, name: str | None) -> dict:
+def claude_complete(prompt: str, *, model: str, max_tokens: int, web_search: bool) -> str:
+    """Single Claude turn. Optionally enables the server-side web-search tool."""
     import anthropic
 
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise HTTPException(500, "ANTHROPIC_API_KEY is not set in .env")
 
     client = anthropic.Anthropic()
-    messages = [{"role": "user", "content": build_prompt(ticker, name)}]
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+    messages = [{"role": "user", "content": prompt}]
+    tools = (
+        [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+        if web_search else []
+    )
 
     # Server-side tools may pause; resume until the turn ends.
     for _ in range(6):
         resp = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=MAX_TOKENS,
+            model=model,
+            max_tokens=max_tokens,
             messages=messages,
             tools=tools,
         )
@@ -130,11 +173,11 @@ def analyze_with_claude(ticker: str, name: str | None) -> dict:
             continue
         break
 
-    text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-    return extract_json(text)
+    return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
 
 
-def analyze_with_openai(ticker: str, name: str | None) -> dict:
+def openai_complete(prompt: str, *, model: str, max_tokens: int, web_search: bool) -> str:
+    """Single OpenAI Responses turn. Optionally enables the web-search tool."""
     from openai import OpenAI
 
     if not os.getenv("OPENAI_API_KEY"):
@@ -142,20 +185,54 @@ def analyze_with_openai(ticker: str, name: str | None) -> dict:
 
     client = OpenAI()
     resp = client.responses.create(
-        model=OPENAI_MODEL,
-        tools=[{"type": "web_search_preview"}],
-        max_output_tokens=MAX_TOKENS,
-        input=build_prompt(ticker, name),
+        model=model,
+        tools=[{"type": "web_search_preview"}] if web_search else [],
+        max_output_tokens=max_tokens,
+        input=prompt,
     )
-    return extract_json(resp.output_text)
+    return resp.output_text
 
 
+# Provider config: (prompt-generator model, analysis model, completion fn).
 PROVIDERS = {
-    "claude": analyze_with_claude,
-    "anthropic": analyze_with_claude,
-    "openai": analyze_with_openai,
-    "chatgpt": analyze_with_openai,
+    "claude":    (ANTHROPIC_PROMPT_MODEL, ANTHROPIC_MODEL, claude_complete),
+    "anthropic": (ANTHROPIC_PROMPT_MODEL, ANTHROPIC_MODEL, claude_complete),
+    "openai":    (OPENAI_PROMPT_MODEL, OPENAI_MODEL, openai_complete),
+    "chatgpt":   (OPENAI_PROMPT_MODEL, OPENAI_MODEL, openai_complete),
 }
+
+
+def run_two_agent_analysis(provider: str, ticker: str, name: str | None) -> dict:
+    """Agent 1 writes a company-specific research strategy; Agent 2 follows it
+    (with web search) to produce the JSON analysis. Returns both the analysis
+    and the exact prompt Agent 2 used."""
+    prompt_model, analysis_model, complete = PROVIDERS[provider]
+    today = datetime.date.today().isoformat()
+
+    # Agent 1 — generate the research strategy (no web search).
+    strategy = complete(
+        build_meta_prompt(ticker, name, today),
+        model=prompt_model,
+        max_tokens=PROMPT_MAX_TOKENS,
+        web_search=False,
+    ).strip()
+    if not strategy:
+        raise HTTPException(502, "The prompt-generator returned no text. Try again.")
+
+    # Agent 2 — run the analysis using the generated prompt + JSON contract.
+    final_prompt = build_final_prompt(strategy)
+    text = complete(
+        final_prompt,
+        model=analysis_model,
+        max_tokens=MAX_TOKENS,
+        web_search=True,
+    )
+    return {
+        "analysis": extract_json(text),
+        "prompt": final_prompt,
+        "promptModel": prompt_model,
+        "analysisModel": analysis_model,
+    }
 
 
 # ── Telegram ───────────────────────────────────────────────────────────────
@@ -269,12 +346,12 @@ def analyze(req: AnalyzeRequest):
     if not req.ticker:
         raise HTTPException(400, "ticker is required")
 
-    fn = PROVIDERS.get(req.provider.lower())
-    if not fn:
+    provider = req.provider.lower()
+    if provider not in PROVIDERS:
         raise HTTPException(400, f"unknown provider: {req.provider}")
 
     try:
-        data = fn(req.ticker, req.name)
+        result = run_two_agent_analysis(provider, req.ticker, req.name)
     except HTTPException:
         raise
     except json.JSONDecodeError:
@@ -284,9 +361,11 @@ def analyze(req: AnalyzeRequest):
 
     return {
         "provider": req.provider,
-        "model": ANTHROPIC_MODEL if fn is analyze_with_claude else OPENAI_MODEL,
+        "model": result["analysisModel"],
+        "promptModel": result["promptModel"],
         "ticker": req.ticker,
-        "analysis": data,
+        "analysis": result["analysis"],
+        "prompt": result["prompt"],
         "disclaimer": (
             "AI-generated analysis for research purposes only. This is NOT financial "
             "advice. AI can be inaccurate or out of date — do not rely on it for "
