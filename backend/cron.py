@@ -70,12 +70,14 @@ US_INSTRUMENTS = [
     ("ASML", "ASML Holding N.V."),
     ("TSM", "Taiwan Semiconductor (TSMC)"),
     ("TSLA", "Tesla Inc."),
+    ("VOO", "Vanguard S&P 500 ETF"),
     # US funds
     ("SFLNX", "Schwab Fundamental US Large Co."),
     ("SWPPX", "Schwab S&P 500 Index"),
 ]
 
 INDIA_INSTRUMENTS = [
+    ("COFORGE.NS", "Coforge Ltd."),
     ("DRREDDY.NS", "Dr. Reddy's Laboratories"),
     ("GOLDBEES.NS", "Nippon India Gold ETF"),
     ("HDFCBANK.NS", "HDFC Bank Ltd."),
@@ -172,12 +174,18 @@ def _fetch_mf_daily(client, scheme):
 
 # ── Extreme detection ────────────────────────────────────────────────────────
 
+# Ignore microscopic new extremes: only flag a high/low that cleared the prior
+# extreme by at least this percentage (0.1%).
+MIN_EXTREME_PCT = 0.1
+
+
 def _check_window(points, days):
     """For the trailing `days` window ending at the latest point, decide whether
     the latest value is a high and/or low, and by how much it cleared the prior
     extreme (the extreme of every *other* point in the window).
 
-    Returns a list of (kind, amount, pct) results, possibly empty.
+    Returns a list of (kind, amount, pct) results, possibly empty. Extremes that
+    clear the prior extreme by less than MIN_EXTREME_PCT are dropped.
     """
     if len(points) < 2:
         return []
@@ -197,10 +205,14 @@ def _check_window(points, days):
     out = []
     if latest > prior_max:
         amount = latest - prior_max
-        out.append(("high", amount, (amount / prior_max * 100) if prior_max else 0.0))
+        pct = (amount / prior_max * 100) if prior_max else 0.0
+        if pct >= MIN_EXTREME_PCT:
+            out.append(("high", amount, pct))
     if latest < prior_min:
         amount = prior_min - latest
-        out.append(("low", amount, (amount / prior_min * 100) if prior_min else 0.0))
+        pct = (amount / prior_min * 100) if prior_min else 0.0
+        if pct >= MIN_EXTREME_PCT:
+            out.append(("low", amount, pct))
     return out
 
 

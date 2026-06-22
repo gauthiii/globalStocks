@@ -18,6 +18,7 @@ export const US_STOCKS = [
   { symbol: 'ASML', name: 'ASML Holding N.V.', category: 'Technology' },
   { symbol: 'TSM', name: 'Taiwan Semiconductor (TSMC)', category: 'Technology' },
   { symbol: 'TSLA', name: 'Tesla Inc.', category: 'Consumer Discretionary' },
+  { symbol: 'VOO', name: 'Vanguard S&P 500 ETF', category: 'Index / ETF' },
 ];
 
 export const US_FUNDS = [
@@ -26,6 +27,7 @@ export const US_FUNDS = [
 ];
 
 export const INDIA_STOCKS = [
+  { symbol: 'COFORGE.NS', name: 'Coforge Ltd.', display: 'COFORGE', category: 'Technology' },
   { symbol: 'DRREDDY.NS', name: "Dr. Reddy's Laboratories", display: 'DRREDDY', category: 'Pharma' },
   { symbol: 'GOLDBEES.NS', name: 'Nippon India Gold ETF', display: 'GOLDBEES', category: 'Commodity' },
   { symbol: 'HDFCBANK.NS', name: 'HDFC Bank Ltd.', display: 'HDFCBANK', category: 'Banking' },
